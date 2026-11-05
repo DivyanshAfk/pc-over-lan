@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# pcctl on|off|status : wake, shut down and check a PC from another machine on the LAN.
+#
+# Config comes from the environment (or a file you source from your shell profile):
+#   PC_IP          address of the PC
+#   PC_MAC         MAC address of the PC's wired network card
+#   PC_BCAST       broadcast address of the LAN, e.g. x.y.z.255
+#   PC_USER        user on the PC that the "off" key logs in as
+#   PC_KEY_OFF     private key that is only used for shutting the PC down
+set -u
+: "${PC_IP:?set PC_IP}" "${PC_MAC:?set PC_MAC}" "${PC_BCAST:?set PC_BCAST}"
+
+case "${1:-}" in
+  on)
+    wakeonlan -i "$PC_BCAST" "$PC_MAC"
+    ;;
+  off)
+    # No command is passed on purpose: the server side decides what this key may do.
+    # See README.md ("The off key") for how to lock the key to a shutdown.
+    : "${PC_USER:?set PC_USER}" "${PC_KEY_OFF:?set PC_KEY_OFF}"
+    ssh -i "$PC_KEY_OFF" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=5 \
+        -o StrictHostKeyChecking=accept-new "$PC_USER@$PC_IP"
+    ;;
+  status)
+    nc -z -w 2 "$PC_IP" 22 && echo up || echo down
+    ;;
+  *)
+    echo "usage: pcctl on|off|status"
+    ;;
+esac

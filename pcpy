@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# pcpy <script.py> [args...] : sync a project to a Windows PC and run one script there,
+# waking the PC first if it is off. Output streams back over SSH.
+#
+# Config comes from the environment:
+#   PC_IP, PC_USER      as in pcctl
+#   PC_KEY_WORK         private key for running jobs. Never use the "off" key here.
+#   PCPY_LOCAL_SRC      local source folder to copy, e.g. ~/myproject/src
+#   PCPY_REMOTE_DIR     project folder on the PC in forward-slash form, e.g. C:/myproject
+#   PCPY_DATA_DIR       data folder on the PC (Windows path), exported as DATA_DIR for the job
+#
+# Expects a virtual environment at <project>\.venv on the PC.
+set -u
+: "${PC_IP:?set PC_IP}" "${PC_USER:?set PC_USER}" "${PC_KEY_WORK:?set PC_KEY_WORK}"
+: "${PCPY_LOCAL_SRC:?set PCPY_LOCAL_SRC}" "${PCPY_REMOTE_DIR:?set PCPY_REMOTE_DIR}" "${PCPY_DATA_DIR:?set PCPY_DATA_DIR}"
+
+H="$PC_USER@$PC_IP"
+O="-i $PC_KEY_WORK -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=8"
+
+if ! nc -z -w2 "$PC_IP" 22 2>/dev/null; then
+  echo "[pcpy] waking PC..." >&2
+  pcctl on >/dev/null 2>&1
+  for i in $(seq 1 60); do nc -z -w2 "$PC_IP" 22 2>/dev/null && break; sleep 3; done
+  sleep 5   # port 22 open does not mean the machine is ready for work
+fi
+
+[ -n "${1:-}" ] || { echo "usage: pcpy <script.py> [args...]" >&2; exit 2; }
+script=$1; shift
+
+# copy the project's source folder into the project folder on the PC
+scp -q $O -r "$PCPY_LOCAL_SRC" "$H:$PCPY_REMOTE_DIR/" \
+  || { echo "[pcpy] scp failed" >&2; exit 1; }
+
+# Windows paths for cmd. No space before && after set: cmd would keep it in the value.
+win_dir=${PCPY_REMOTE_DIR//\//\\}
+ssh $O "$H" "cmd /c \"set DATA_DIR=$PCPY_DATA_DIR&& cd /d $win_dir&& .venv\\Scripts\\python.exe src\\$script $* 2>&1\"" | tr -d '\0'
